@@ -1,5 +1,8 @@
 import 'dart:math' as math;
 
+import 'package:excel/excel.dart' as excel;
+import 'package:file_picker/file_picker.dart';
+import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -198,6 +201,89 @@ class _RecipeCostPageState extends State<RecipeCostPage> {
     return (math.pi * radius * radius * _moldHeightCm) / 4;
   }
 
+  Future<void> _exportIngredientPrices() async {
+    final Uint8List bytes = IngredientPriceWorkbook.encode(
+      <IngredientPriceRow>[
+        for (int index = 0; index < _ingredients.length; index += 1)
+          IngredientPriceRow(
+            name: _ingredients[index].name,
+            baseAmount: _ingredients[index].baseAmount,
+            unit: _ingredients[index].unit,
+            unitPrice: _parseUnitPrice(_unitPriceControllers[index].text),
+          ),
+      ],
+    );
+
+    await FileSaver.instance.saveFile(
+      name: 'gia_nguyen_lieu_banh_gato',
+      bytes: bytes,
+      fileExtension: 'xlsx',
+      mimeType: MimeType.microsoftExcel,
+    );
+
+    if (!mounted) {
+      return;
+    }
+    _showMessage('Đã xuất file Excel giá nguyên liệu.');
+  }
+
+  Future<void> _importIngredientPrices() async {
+    final FilePickerResult? result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: <String>['xlsx'],
+      withData: true,
+    );
+
+    if (result == null) {
+      return;
+    }
+
+    final Uint8List? bytes = result.files.single.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      _showMessage('Không đọc được dữ liệu trong file Excel.');
+      return;
+    }
+
+    try {
+      final Map<String, double> importedPrices =
+          IngredientPriceWorkbook.decode(bytes);
+      int updatedCount = 0;
+
+      for (int index = 0; index < _ingredients.length; index += 1) {
+        final double? price =
+            importedPrices[normalizeIngredientName(_ingredients[index].name)];
+        if (price == null) {
+          continue;
+        }
+        _unitPriceControllers[index].text = _formatUnitPrice(price);
+        updatedCount += 1;
+      }
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+      _showMessage(
+        updatedCount > 0
+            ? 'Đã cập nhật $updatedCount giá nguyên liệu từ Excel.'
+            : 'Không tìm thấy nguyên liệu trùng tên trong file Excel.',
+      );
+    } on FormatException catch (error) {
+      _showMessage(error.message);
+    } catch (_) {
+      _showMessage('File Excel không đúng định dạng giá nguyên liệu.');
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<CalculatedIngredient> calculatedIngredients =
@@ -232,6 +318,8 @@ class _RecipeCostPageState extends State<RecipeCostPage> {
                               flex: 3,
                               child: _IngredientSection(
                                 ingredients: calculatedIngredients,
+                                onImportPrices: _importIngredientPrices,
+                                onExportPrices: _exportIngredientPrices,
                               ),
                             ),
                             const SizedBox(width: 18),
@@ -265,6 +353,8 @@ class _RecipeCostPageState extends State<RecipeCostPage> {
                             const SizedBox(height: 16),
                             _IngredientSection(
                               ingredients: calculatedIngredients,
+                              onImportPrices: _importIngredientPrices,
+                              onExportPrices: _exportIngredientPrices,
                             ),
                           ],
                         ),
@@ -516,9 +606,15 @@ class _BatchSummary extends StatelessWidget {
 }
 
 class _IngredientSection extends StatelessWidget {
-  const _IngredientSection({required this.ingredients});
+  const _IngredientSection({
+    required this.ingredients,
+    required this.onImportPrices,
+    required this.onExportPrices,
+  });
 
   final List<CalculatedIngredient> ingredients;
+  final VoidCallback onImportPrices;
+  final VoidCallback onExportPrices;
 
   @override
   Widget build(BuildContext context) {
@@ -529,8 +625,28 @@ class _IngredientSection extends StatelessWidget {
         children: <Widget>[
           Text(
             'Đơn giá đã được quy đổi sẵn về đ/g từ giá nguyên liệu bạn cung '
-            'cấp. Có thể sửa trực tiếp từng ô khi giá mua thay đổi.',
+            'cấp. Có thể sửa trực tiếp từng ô hoặc nhập file Excel khi giá mua '
+            'thay đổi.',
             style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: <Widget>[
+              FilledButton.icon(
+                key: const Key('export-excel-button'),
+                onPressed: onExportPrices,
+                icon: const Icon(Icons.download),
+                label: const Text('Xuất Excel'),
+              ),
+              OutlinedButton.icon(
+                key: const Key('import-excel-button'),
+                onPressed: onImportPrices,
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Nhập Excel'),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           LayoutBuilder(
@@ -815,9 +931,165 @@ class CalculatedIngredient {
   int get lineTotal => (amount * unitPrice).round();
 }
 
+class IngredientPriceRow {
+  const IngredientPriceRow({
+    required this.name,
+    required this.baseAmount,
+    required this.unit,
+    required this.unitPrice,
+  });
+
+  final String name;
+  final double baseAmount;
+  final String unit;
+  final double unitPrice;
+}
+
+class IngredientPriceWorkbook {
+  static const String sheetName = 'Gia nguyen lieu';
+  static const String ingredientHeader = 'Nguyên liệu';
+  static const String baseAmountHeader = 'Định lượng gốc';
+  static const String unitHeader = 'Đơn vị';
+  static const String unitPriceHeader = 'Đơn giá (đ/g)';
+  static const String noteHeader = 'Ghi chú';
+
+  static Uint8List encode(List<IngredientPriceRow> rows) {
+    final excel.Excel workbook = excel.Excel.createExcel();
+    final excel.Sheet sheet = workbook[sheetName];
+    if (workbook.getDefaultSheet() != sheetName) {
+      workbook.delete('Sheet1');
+    }
+
+    sheet.appendRow(<excel.CellValue?>[
+      excel.TextCellValue(ingredientHeader),
+      excel.TextCellValue(baseAmountHeader),
+      excel.TextCellValue(unitHeader),
+      excel.TextCellValue(unitPriceHeader),
+      excel.TextCellValue(noteHeader),
+    ]);
+
+    for (final IngredientPriceRow row in rows) {
+      sheet.appendRow(<excel.CellValue?>[
+        excel.TextCellValue(row.name),
+        excel.DoubleCellValue(row.baseAmount),
+        excel.TextCellValue(row.unit),
+        excel.DoubleCellValue(row.unitPrice),
+        excel.TextCellValue('Sửa cột đơn giá để import lại vào app'),
+      ]);
+    }
+
+    final List<int>? bytes = workbook.encode();
+    if (bytes == null) {
+      throw const FormatException('Không tạo được file Excel.');
+    }
+    return Uint8List.fromList(bytes);
+  }
+
+  static Map<String, double> decode(List<int> bytes) {
+    final excel.Excel workbook = excel.Excel.decodeBytes(bytes);
+    if (workbook.tables.isEmpty) {
+      throw const FormatException('File Excel không có dữ liệu.');
+    }
+
+    final excel.Sheet sheet =
+        workbook.tables[sheetName] ?? workbook.tables.values.first;
+    final List<List<excel.Data?>> rows = sheet.rows;
+    if (rows.length < 2) {
+      throw const FormatException('File Excel chưa có dòng giá nguyên liệu.');
+    }
+
+    final List<String> headers = rows.first
+        .map((excel.Data? cell) => _cellText(cell?.value))
+        .map(_normalizeHeader)
+        .toList();
+    final int nameIndex = _headerIndex(headers, ingredientHeader, fallback: 0);
+    final int priceIndex = _headerIndex(headers, unitPriceHeader, fallback: 3);
+
+    final Map<String, double> prices = <String, double>{};
+    for (final List<excel.Data?> row in rows.skip(1)) {
+      final String name = _cellText(_cellValueAt(row, nameIndex)).trim();
+      if (name.isEmpty) {
+        continue;
+      }
+
+      final double? price =
+          _parseImportedUnitPrice(_cellText(_cellValueAt(row, priceIndex)));
+      if (price == null) {
+        continue;
+      }
+      prices[normalizeIngredientName(name)] = price;
+    }
+
+    if (prices.isEmpty) {
+      throw const FormatException('File Excel chưa có đơn giá hợp lệ.');
+    }
+    return prices;
+  }
+
+  static excel.CellValue? _cellValueAt(List<excel.Data?> row, int index) {
+    if (index < 0 || index >= row.length) {
+      return null;
+    }
+    return row[index]?.value;
+  }
+
+  static int _headerIndex(
+    List<String> headers,
+    String expectedHeader, {
+    required int fallback,
+  }) {
+    final int index = headers.indexOf(_normalizeHeader(expectedHeader));
+    if (index >= 0) {
+      return index;
+    }
+    return fallback;
+  }
+
+  static String _normalizeHeader(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[\s()/-]+'), '')
+        .replaceAll('đ', 'd');
+  }
+
+  static String _cellText(excel.CellValue? value) {
+    if (value == null) {
+      return '';
+    }
+    return value.toString();
+  }
+}
+
 double _parseUnitPrice(String value) {
   final String normalized = value.trim().replaceAll(',', '.');
   return double.tryParse(normalized) ?? 0;
+}
+
+double? _parseImportedUnitPrice(String value) {
+  String normalized = value
+      .toLowerCase()
+      .replaceAll('đ/g', '')
+      .replaceAll('vnd/g', '')
+      .replaceAll('đ', '')
+      .replaceAll(RegExp(r'\s+'), '')
+      .trim();
+
+  if (normalized.contains(',') && !normalized.contains('.')) {
+    normalized = normalized.replaceAll(',', '.');
+  }
+  if (RegExp(r'^\d{1,3}(\.\d{3})+$').hasMatch(normalized)) {
+    normalized = normalized.replaceAll('.', '');
+  }
+
+  final double? price = double.tryParse(normalized);
+  if (price == null || price < 0) {
+    return null;
+  }
+  return price;
+}
+
+String normalizeIngredientName(String value) {
+  return value.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
 String _formatUnitPrice(double value) {
