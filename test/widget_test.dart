@@ -16,11 +16,11 @@ void main() {
     expect(find.text('Thành tiền'), findsOneWidget);
     expect(find.text('Định lượng'), findsOneWidget);
     expect(find.text('Trứng gà'), findsOneWidget);
-    expect(find.text('Đã nhập chuẩn 18cm / 300g.'), findsOneWidget);
+    expect(find.text('Đã nhập chuẩn 16cm / 350g.'), findsOneWidget);
     expect(find.text('14.768 đ'), findsOneWidget);
     expect(find.text('45.45'), findsWidgets);
     expect(find.byKey(const Key('mold-size-field')), findsOneWidget);
-    expect(find.text('18'), findsOneWidget);
+    expect(find.text('16'), findsOneWidget);
   });
 
   testWidgets('changes the selected cake count', (WidgetTester tester) async {
@@ -51,5 +51,22 @@ void main() {
     await tester.pump();
 
     expect(find.text('300 đ'), findsWidgets);
+  });
+
+  testWidgets('scales the recipe by mold volume formula', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const RecipeCostApp());
+
+    await tester.enterText(find.byKey(const Key('mold-size-field')), '30');
+    await tester.pump();
+
+    expect(find.text('53.0'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('unit-price-0')));
+    await tester.enterText(find.byKey(const Key('unit-price-0')), '10');
+    await tester.pump();
+
+    expect(find.text('530 đ'), findsWidgets);
   });
 }

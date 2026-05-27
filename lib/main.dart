@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -81,11 +83,12 @@ class RecipeCostPage extends StatefulWidget {
 }
 
 class _RecipeCostPageState extends State<RecipeCostPage> {
-  static const double _baseMoldSizeCm = 18;
-  static const double _baseCakeWeightGrams = 300;
+  static const double _baseMoldSizeCm = 16;
+  static const double _baseCakeWeightGrams = 350;
+  static const double _moldHeightCm = 7;
 
   final TextEditingController _moldSizeController =
-      TextEditingController(text: '18');
+      TextEditingController(text: '16');
   late final List<TextEditingController> _unitPriceControllers;
 
   int _cakeCount = 1;
@@ -158,8 +161,8 @@ class _RecipeCostPageState extends State<RecipeCostPage> {
   }
 
   double get _recipeScale {
-    final double moldRatio = _moldSizeCm / _baseMoldSizeCm;
-    return moldRatio * moldRatio * _cakeCount;
+    return (_cakeWeightForMold(_moldSizeCm) / _baseCakeWeightGrams) *
+        _cakeCount;
   }
 
   List<CalculatedIngredient> get _calculatedIngredients {
@@ -183,7 +186,16 @@ class _RecipeCostPageState extends State<RecipeCostPage> {
   }
 
   double get _estimatedWeight {
-    return _baseCakeWeightGrams * _recipeScale;
+    return _cakeWeightForMold(_moldSizeCm) * _cakeCount;
+  }
+
+  double _cakeWeightForMold(double moldSizeCm) {
+    if (moldSizeCm == _baseMoldSizeCm) {
+      return _baseCakeWeightGrams;
+    }
+
+    final double radius = moldSizeCm / 2;
+    return (math.pi * radius * radius * _moldHeightCm) / 4;
   }
 
   @override
@@ -297,9 +309,9 @@ class _PageHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Công thức chuẩn cho 1 ổ 300g khuôn 18cm. Khi đổi khuôn '
-                  'hoặc số lượng bánh, định lượng được quy đổi theo diện '
-                  'tích mặt khuôn.',
+                  'Công thức chuẩn cho 1 ổ 350g khuôn 16cm. Khi đổi khuôn, '
+                  'gram bánh được tính theo pi * r^2 * h / 4 với h = 7cm, '
+                  'rồi chia lại tỷ lệ từng nguyên liệu.',
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),
               ],
@@ -344,7 +356,7 @@ class _RecipeStatus extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Đã nhập chuẩn 18cm / 300g.',
+            'Đã nhập chuẩn 16cm / 350g.',
             style: Theme.of(context).textTheme.bodyMedium,
           ),
         ],
