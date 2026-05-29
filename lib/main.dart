@@ -950,7 +950,8 @@ class IngredientPriceWorkbook {
   static const String ingredientHeader = 'Nguyên liệu';
   static const String baseAmountHeader = 'Định lượng gốc';
   static const String unitHeader = 'Đơn vị';
-  static const String unitPriceHeader = 'Đơn giá (đ/g)';
+  static const String unitPriceHeader = 'Giá nhập hoặc đơn giá';
+  static const String legacyUnitPriceHeader = 'Đơn giá (đ/g)';
   static const String noteHeader = 'Ghi chú';
 
   static Uint8List encode(List<IngredientPriceRow> rows) {
@@ -974,7 +975,9 @@ class IngredientPriceWorkbook {
         excel.DoubleCellValue(row.baseAmount),
         excel.TextCellValue(row.unit),
         excel.DoubleCellValue(row.unitPrice),
-        excel.TextCellValue('Sửa cột đơn giá để import lại vào app'),
+        excel.TextCellValue(
+          'Có thể nhập 20.000đ/1000g, 37.000đ/kg hoặc 20đ/g',
+        ),
       ]);
     }
 
@@ -1003,7 +1006,11 @@ class IngredientPriceWorkbook {
         .map(_normalizeHeader)
         .toList();
     final int nameIndex = _headerIndex(headers, ingredientHeader, fallback: 0);
-    final int priceIndex = _headerIndex(headers, unitPriceHeader, fallback: 3);
+    final int priceIndex = _headerIndexAny(
+      headers,
+      <String>[unitPriceHeader, legacyUnitPriceHeader],
+      fallback: 3,
+    );
 
     final Map<String, double> prices = <String, double>{};
     for (final List<excel.Data?> row in rows.skip(1)) {
@@ -1038,7 +1045,18 @@ class IngredientPriceWorkbook {
     String expectedHeader, {
     required int fallback,
   }) {
-    final int index = headers.indexOf(_normalizeHeader(expectedHeader));
+    return _headerIndexAny(headers, <String>[expectedHeader],
+        fallback: fallback);
+  }
+
+  static int _headerIndexAny(
+    List<String> headers,
+    List<String> expectedHeaders, {
+    required int fallback,
+  }) {
+    final Set<String> normalizedExpectedHeaders =
+        expectedHeaders.map(_normalizeHeader).toSet();
+    final int index = headers.indexWhere(normalizedExpectedHeaders.contains);
     if (index >= 0) {
       return index;
     }
@@ -1066,26 +1084,89 @@ double _parseUnitPrice(String value) {
 }
 
 double? _parseImportedUnitPrice(String value) {
-  String normalized = value
-      .toLowerCase()
-      .replaceAll('đ/g', '')
-      .replaceAll('vnd/g', '')
-      .replaceAll('đ', '')
-      .replaceAll(RegExp(r'\s+'), '')
-      .trim();
-
-  if (normalized.contains(',') && !normalized.contains('.')) {
-    normalized = normalized.replaceAll(',', '.');
+  final String normalized = value.toLowerCase().replaceAll(
+        RegExp(r'\s+'),
+        '',
+      );
+  final int slashIndex = normalized.indexOf('/');
+  if (slashIndex > 0 && slashIndex < normalized.length - 1) {
+    final double? packagePrice = _parseMoneyNumber(
+      normalized.substring(0, slashIndex),
+    );
+    final double? packageGrams = _parsePackageGrams(
+      normalized.substring(slashIndex + 1),
+    );
+    if (packagePrice != null && packageGrams != null && packageGrams > 0) {
+      return packagePrice / packageGrams;
+    }
   }
-  if (RegExp(r'^\d{1,3}(\.\d{3})+$').hasMatch(normalized)) {
-    normalized = normalized.replaceAll('.', '');
-  }
 
-  final double? price = double.tryParse(normalized);
+  final double? price = _parseUnitPriceNumber(normalized);
   if (price == null || price < 0) {
     return null;
   }
   return price;
+}
+
+double? _parsePackageGrams(String value) {
+  final bool isKilogram = value.contains('kg');
+  final bool isGramLike =
+      value.contains('g') || value.contains('gram') || value.contains('ml');
+  final Match? numberMatch = RegExp(r'\d+(?:[.,]\d+)*').firstMatch(value);
+
+  double? amount;
+  if (numberMatch == null && isKilogram) {
+    amount = 1;
+  } else if (numberMatch != null) {
+    amount = _parseMoneyNumber(numberMatch.group(0)!);
+  }
+
+  if (amount == null || amount <= 0) {
+    return null;
+  }
+  if (isKilogram) {
+    return amount * 1000;
+  }
+  if (isGramLike || !value.contains(RegExp('[a-z]'))) {
+    return amount;
+  }
+  return null;
+}
+
+double? _parseMoneyNumber(String value) {
+  String normalized = value
+      .replaceAll('vnd', '')
+      .replaceAll('đ', '')
+      .replaceAll(RegExp(r'[^0-9,.]'), '');
+  if (normalized.isEmpty) {
+    return null;
+  }
+  normalized = _normalizeNumberSeparators(normalized);
+  return double.tryParse(normalized);
+}
+
+double? _parseUnitPriceNumber(String value) {
+  String normalized = value
+      .replaceAll('đ/g', '')
+      .replaceAll('vnd/g', '')
+      .replaceAll('vnd', '')
+      .replaceAll('đ', '')
+      .replaceAll(RegExp(r'[^0-9,.]'), '');
+  if (normalized.isEmpty) {
+    return null;
+  }
+  normalized = _normalizeNumberSeparators(normalized);
+  return double.tryParse(normalized);
+}
+
+String _normalizeNumberSeparators(String value) {
+  if (value.contains(',') && !value.contains('.')) {
+    return value.replaceAll(',', '.');
+  }
+  if (RegExp(r'^\d{1,3}(\.\d{3})+([,.]\d+)?$').hasMatch(value)) {
+    return value.replaceAll('.', '').replaceAll(',', '.');
+  }
+  return value;
 }
 
 String normalizeIngredientName(String value) {

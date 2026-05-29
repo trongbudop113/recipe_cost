@@ -1,3 +1,4 @@
+import 'package:excel/excel.dart' as excel;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -94,5 +95,48 @@ void main() {
 
     expect(prices[normalizeIngredientName('Trứng gà')], 45.45);
     expect(prices[normalizeIngredientName('Corn syrup')], 60);
+  });
+
+  test('imports package prices and converts them to unit prices', () {
+    final excel.Excel workbook = excel.Excel.createExcel();
+    final excel.Sheet sheet = workbook[IngredientPriceWorkbook.sheetName];
+    workbook.delete('Sheet1');
+
+    sheet.appendRow(<excel.CellValue?>[
+      excel.TextCellValue(IngredientPriceWorkbook.ingredientHeader),
+      excel.TextCellValue(IngredientPriceWorkbook.baseAmountHeader),
+      excel.TextCellValue(IngredientPriceWorkbook.unitHeader),
+      excel.TextCellValue(IngredientPriceWorkbook.unitPriceHeader),
+      excel.TextCellValue(IngredientPriceWorkbook.noteHeader),
+    ]);
+    sheet.appendRow(<excel.CellValue?>[
+      excel.TextCellValue('Đường (hỗn hợp lòng đỏ)'),
+      const excel.DoubleCellValue(25),
+      excel.TextCellValue('g'),
+      excel.TextCellValue('20.000đ/1000g'),
+      null,
+    ]);
+    sheet.appendRow(<excel.CellValue?>[
+      excel.TextCellValue('Dầu ăn'),
+      const excel.DoubleCellValue(30),
+      excel.TextCellValue('g'),
+      excel.TextCellValue('37.000đ/kg'),
+      null,
+    ]);
+    sheet.appendRow(<excel.CellValue?>[
+      excel.TextCellValue('Sữa tươi'),
+      const excel.DoubleCellValue(30),
+      excel.TextCellValue('g'),
+      excel.TextCellValue('8.000đ/220g'),
+      null,
+    ]);
+
+    final Map<String, double> prices = IngredientPriceWorkbook.decode(
+      workbook.encode()!,
+    );
+
+    expect(prices[normalizeIngredientName('Đường (hỗn hợp lòng đỏ)')], 20);
+    expect(prices[normalizeIngredientName('Dầu ăn')], 37);
+    expect(prices[normalizeIngredientName('Sữa tươi')], closeTo(36.36, 0.01));
   });
 }
